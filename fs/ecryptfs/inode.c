@@ -38,7 +38,7 @@
 
 #if defined (FEATURE_SDCARD_MEDIAEXN_SYSTEMCALL_ENCRYPTION)
 #include <linux/unistd.h>
-#include "../LGSDEncManager.h"
+#include "LGSDEncManager.h"
 #endif /* FEATURE_SDCARD_MEDIAEXN_SYSTEMCALL_ENCRYPTION */
 
 static struct dentry *lock_parent(struct dentry *dentry)
