@@ -447,8 +447,6 @@ static int msm_pinctrl_dt_parse_pins(struct device_node *dev_node,
                 if (!of_device_is_available(pgrp_np))
                         continue;
 
-                if (!of_device_is_available_revision(pgrp_np))
-                        continue;
 #endif
 
 		if (!of_find_property(pgrp_np, "qcom,pins", NULL))
@@ -483,8 +481,6 @@ static int msm_pinctrl_dt_parse_pins(struct device_node *dev_node,
                 if (!of_device_is_available(pgrp_np))
                         continue;
 
-                if (!of_device_is_available_revision(pgrp_np))
-                        continue;
 #endif
 
 		if (!of_find_property(pgrp_np, "qcom,pins", NULL))
