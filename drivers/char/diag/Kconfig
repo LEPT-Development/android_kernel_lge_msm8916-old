@@ -53,16 +53,6 @@ config LGE_DIAG_ENABLE_SYSFS
 	 diag enable sysfs value can define diag enable or disable
 endmenu
 
-menu "LGE DM APP Support"
-
-config LGE_DM_APP
-	bool "LGE DM APP Support"
-	default n
-	depends on MACH_LGE
-	help
-	 LGE DM APP Support
-endmenu
-
 menu "LGE DIAG BYPASS Support"
 config LGE_DIAG_BYPASS
     tristate "Support LGE diag bypass for factory"
