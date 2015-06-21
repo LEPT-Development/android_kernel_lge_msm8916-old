@@ -243,974 +243,846 @@ void lge_dm_usb_fn(struct work_struct *work)
 }
 
 /*  Modem_request command */
-static int lge_dm_tty_modem_request(struct dm_tty *lge_dm_tty_drv, const unsigned char *buf, int count)
+static int lge_dm_tty_modem_request(const unsigned char *buf, int count)
 {
+	short modem_chip;
+	int length;
 
-    int length;
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-    short modem_chip = Secondary_modem_chip;
-    int err = 0;
-    int index = 0;
-#else
-    short modem_chip = Primary_modem_chip;
-#endif /*CONFIG_DIAGFWD_BRIDGE_CODE*/
+#ifdef CONFIG_DIAG_HSIC_PIPE
+	int err = 0;
+#endif
 
+	memcpy(&modem_chip, buf + dm_modem_request_header_length,
+							sizeof(modem_chip));
 
-    if(lge_dm_tty_drv->logging_mode == DM_APP_SDM)
-    {
-        length = dm_modem_request_header_length + sizeof(modem_chip);
+	length = dm_modem_request_header_length + sizeof(modem_chip);
 
-        if (modem_chip == Primary_modem_chip) {
-            /* send masks to modem */
-            if(buf != NULL)
-                diag_process_hdlc((void *)buf + length, count - length);
-            else
-                pr_info("[DM_APP]buf is null , lge_dm_tty_modem_request \n");
-        } else if (modem_chip == Secondary_modem_chip) {
+	if (modem_chip == Primary_modem_chip) {
+		/* send masks to modem */
+		diag_process_hdlc((void *)buf + length, count - length);
+	} else if (modem_chip == Secondary_modem_chip) {
 
-            /* send masks to 9k */
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-                /* send masks to All 9k */
-                for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-        //            if (diag_hsic[index].hsic_ch && (payload_size > 0) &&
-        //                             (remote_proc == MDM)) {
-                    if (diag_hsic[index].hsic_ch && (count > 0)){
-                        /* wait sending mask updates
-                         * if HSIC ch not ready */
-                        if (diag_hsic[index].in_busy_hsic_write)
-                            wait_event_interruptible(driver->wait_q,
-                                (diag_hsic[index].
-                                 in_busy_hsic_write != 1));
-                        diag_hsic[index].in_busy_hsic_write = 1;
-                        diag_hsic[index].in_busy_hsic_read_on_device =
-                                            0;
-        //                err = diag_bridge_write(index,
-        //                        driver->user_space_data +
-        //                        token_offset, payload_size);
-                        err = diag_bridge_write(index, (void *)buf + length, count - length);
+#ifdef CONFIG_DIAG_SDIO_PIPE
+		/* send masks to 9k */
+		if (driver->sdio_ch) {
+			wait_event_interruptible(driver->wait_q,
+				(sdio_write_avail(driver->sdio_ch)
+					>= (count - length)));
+			if (driver->sdio_ch && ((count - length) > 0)) {
+				sdio_write(driver->sdio_ch,
+					(void *)buf + length,
+						count - length);
+			}
+		}
+#endif
 
-                        if (err) {
-                            pr_err("diag: err sending mask to MDM: %d\n",
-                                   err);
-                            /*
-                            * If the error is recoverable, then
-                            * clear the write flag, so we will
-                            * resubmit a write on the next frame.
-                            * Otherwise, don't resubmit a write
-                            * on the next frame.
-                            */
-                            if ((-ESHUTDOWN) != err)
-                                diag_hsic[index].in_busy_hsic_write = 0;
-                         }
-                     }
-                }
+#ifdef CONFIG_DIAG_HSIC_PIPE
+		/* send masks to 9k too */
+		if (driver->hsic_ch && (count - length > 0)) {
+			/* wait sending mask updates if HSIC ch not ready */
+			if (driver->in_busy_hsic_write)
+				wait_event_interruptible(driver->wait_q,
+					(driver->in_busy_hsic_write != 1));
+			driver->in_busy_hsic_write = 1;
+			driver->in_busy_hsic_read_on_device = 0;
+			err = diag_bridge_write((void *)buf + length,
+							 count - length);
+			if (err) {
+				pr_err("diag: err sending mask to MDM: %d\n",
+									 err);
+				/*
+				* If the error is recoverable, then clear
+				* the write flag, so we will resubmit a
+				* write on the next frame.  Otherwise, don't
+				* resubmit a write on the next frame.
+				*/
+				if ((-ESHUTDOWN) != err)
+					driver->in_busy_hsic_write = 0;
+			}
+		}
+#endif
 
-#endif /*CONFIG_DIAGFWD_BRIDGE_CODE*/
+	} else {
+		pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_write"
+			"modem_number %d "
+			"error count = %d length = %d\n",
+			__func__, modem_chip, count, length);
+	}
 
-        } else {
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_write"
-                "modem_number %d "
-                "error count = %d length = %d\n",
-                __func__, modem_chip, count, length);
-        }
-    }
-    else if(lge_dm_tty_drv->logging_mode == DM_APP_ODM)
-    {
-        if (modem_chip == Primary_modem_chip) {
-            diag_process_hdlc((void *)buf, count);
-        } else if (modem_chip == Secondary_modem_chip) {
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-                /* send masks to All 9k */
-                for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-        //            if (diag_hsic[index].hsic_ch && (payload_size > 0) &&
-        //                             (remote_proc == MDM)) {
-                    if (diag_hsic[index].hsic_ch && (count > 0)){
-                        /* wait sending mask updates
-                         * if HSIC ch not ready */
-                        if (diag_hsic[index].in_busy_hsic_write)
-                            wait_event_interruptible(driver->wait_q,
-                                (diag_hsic[index].
-                                 in_busy_hsic_write != 1));
-                        diag_hsic[index].in_busy_hsic_write = 1;
-                        diag_hsic[index].in_busy_hsic_read_on_device =
-                                            0;
-        //                err = diag_bridge_write(index,
-        //                        driver->user_space_data +
-        //                        token_offset, payload_size);
-//                        err = diag_bridge_write(index, (void *)buf + length, count - length);
-                        err = diag_bridge_write(index, (void *)buf, count);
-
-                        if (err) {
-                            pr_err("diag: err sending mask to MDM: %d\n",
-                                   err);
-                            /*
-                            * If the error is recoverable, then
-                            * clear the write flag, so we will
-                            * resubmit a write on the next frame.
-                            * Otherwise, don't resubmit a write
-                            * on the next frame.
-                            */
-                            if ((-ESHUTDOWN) != err)
-                                diag_hsic[index].in_busy_hsic_write = 0;
-                         }
-                     }
-                }
-
-#endif /*CONFIG_DIAGFWD_BRIDGE_CODE*/
-        }
-    }
-
-    return count;
+	return count;
 }
 
 /* Modem_response command */
 static int lge_dm_tty_modem_response(struct dm_tty *lge_dm_tty_drv,
-            short modem_number, const unsigned char *buf, int count)
+			short modem_number, const unsigned char *buf, int count)
 {
-    int num_push = 0;
-    int left = 0;
-    int total_push = 0;
+	int num_push = 0;
+	int left = 0;
+	int total_push;
+	struct timeval time;
+	int start_flag_length;
+	int end_flag_length;
 
-    struct timeval time;
-    int start_flag_length;
-    int end_flag_length;
+	if (count == 0)
+		return 0;
 
-    if (count == 0)
-        return 0;
+	if (lge_dm_tty_drv->
+		is_modem_open[modem_number] == FALSE)
+		return 0;
 
-    if(lge_dm_tty_drv->logging_mode == DM_APP_SDM)
-    {
+	/* make start flag */
+	memcpy(dm_modem_response, &dm_rx_start_flag,
+		sizeof(dm_rx_start_flag));
 
-        /* make start flag */
-        memcpy(dm_modem_response, &dm_rx_start_flag,
-            sizeof(dm_rx_start_flag));
+	start_flag_length = sizeof(dm_rx_start_flag);
 
-        start_flag_length = sizeof(dm_rx_start_flag);
+	/* make header */
+	dm_modem_response_header->dm_router_size =
+		dm_modem_response_header_length +
+			dm_modem_response_body_length + count;
 
-        /* make header */
-        dm_modem_response_header->dm_router_size =
-            dm_modem_response_header_length +
-                dm_modem_response_body_length + count;
+	memcpy(dm_modem_response + start_flag_length,
+		dm_modem_response_header,
+			dm_modem_response_header_length);
 
-        memcpy(dm_modem_response + start_flag_length,
-            dm_modem_response_header,
-                dm_modem_response_header_length);
+	/* make body */
+	dm_modem_response_body->modem_chip = modem_number;
 
-        /* make body */
-    dm_modem_response_body->modem_chip = modem_number;
+	do_gettimeofday(&time);
 
-        do_gettimeofday(&time);
+	memcpy(&(dm_modem_response_body->local_time), &time,
+		sizeof(struct timeval));
 
-        memcpy(&(dm_modem_response_body->local_time), &time,
-            sizeof(struct timeval));
+	memcpy(dm_modem_response + start_flag_length +
+		dm_modem_response_header_length,
+			dm_modem_response_body,
+				dm_modem_response_body_length);
 
-        memcpy(dm_modem_response + start_flag_length +
-            dm_modem_response_header_length,
-                dm_modem_response_body,
-                    dm_modem_response_body_length);
+	memcpy(dm_modem_response + start_flag_length +
+		dm_modem_response_header_length +
+			dm_modem_response_body_length, buf, count);
 
-        if(buf != NULL){
-        memcpy(dm_modem_response + start_flag_length +
-            dm_modem_response_header_length +
-                dm_modem_response_body_length, buf, count);
-        }else{
-            printk("[DM_APP]buf is null!\n");
-        }
+	dm_modem_response_length =
+		dm_modem_response_header->dm_router_size +
+			start_flag_length;
 
-        dm_modem_response_length =
-            dm_modem_response_header->dm_router_size +
-                start_flag_length;
+	/* make end flag */
+	memcpy(dm_modem_response + dm_modem_response_length,
+		&dm_rx_end_flag, sizeof(dm_rx_end_flag));
 
-        /* make end flag */
-        memcpy(dm_modem_response + dm_modem_response_length,
-            &dm_rx_end_flag, sizeof(dm_rx_end_flag));
+	end_flag_length = sizeof(dm_rx_end_flag);
 
-        end_flag_length = sizeof(dm_rx_end_flag);
+	dm_modem_response_length = dm_modem_response_length +
+		end_flag_length;
 
-        dm_modem_response_length = dm_modem_response_length +
-            end_flag_length;
+	/* send modem_response packet to DM router */
+	total_push = 0;
+	left = dm_modem_response_length;
 
-        /* send modem_response packet to DM router */
-        total_push = 0;
-        left = dm_modem_response_length;
+	do {
+		num_push = tty_insert_flip_string(lge_dm_tty_drv->tty_str,
+			dm_modem_response + total_push, left);
+		total_push += num_push;
+		left -= num_push;
+		tty_flip_buffer_push(lge_dm_tty_drv->tty_str);
+	} while (left != 0);
 
-        do {
-#ifndef CONFIG_TTY_PORT
-            num_push = tty_insert_flip_string(lge_dm_tty_drv->tty_str,
-                dm_modem_response + total_push, left);
-#else
-            num_push = tty_insert_flip_string(&dm_tty_port,
-                dm_modem_response + total_push, left);
-#endif /* CONFIG_TTY_PORT */
-
-            total_push += num_push;
-            left -= num_push;
-#ifndef CONFIG_TTY_PORT
-            tty_flip_buffer_push(lge_dm_tty_drv->tty_str);
-#else
-            tty_flip_buffer_push(&dm_tty_port);
-#endif /* CONFIG_TTY_PORT */
-        } while (left != 0);
-    }
-    else if(lge_dm_tty_drv->logging_mode == DM_APP_ODM)
-    {
-        total_push = 0;
-        left = count;
-
-        do {
-#ifndef    CONFIG_TTY_PORT
-            num_push = tty_insert_flip_string(lge_dm_tty_drv->tty_str,
-                buf + total_push, left);
-#else
-            num_push = tty_insert_flip_string(&dm_tty_port,
-                buf + total_push, left);
-#endif /* CONFIG_TTY_PORT */
-
-            total_push += num_push;
-            left -= num_push;
-#ifndef CONFIG_TTY_PORT
-            tty_flip_buffer_push(lge_dm_tty_drv->tty_str);
-#else
-            tty_flip_buffer_push(&dm_tty_port);
-#endif /* CONFIG_TTY_PORT */
-
-
-        } while (left != 0);
-    }
-
-    return total_push;
+	return total_push;
 }
 
 static int lge_dm_tty_read_thread(void *data)
 {
-    int j = 0;
-    struct dm_tty *lge_dm_tty_drv = NULL;
-    struct diag_buf_tbl_t *entry = NULL;
-    unsigned long flags;
+	int i = 0;
+	struct dm_tty *lge_dm_tty_drv = NULL;
 
-    lge_dm_tty_drv = lge_dm_tty;
+	lge_dm_tty_drv = lge_dm_tty;
 
-    while (1) {
+	/* make common header */
+	dm_modem_response_header->dm_router_cmd = DM_APP_MODEM_RESPONSE;
+	dm_modem_response_header->dm_router_type = DM_APP_NOTICE;
 
-        wait_event_interruptible(lge_dm_tty->waitq,
-            lge_dm_tty->set_logging);
+	while (1) {
 
-        mutex_lock(&driver->diagchar_mutex);
+		wait_event_interruptible(lge_dm_tty->waitq,
+			lge_dm_tty->set_logging);
 
-        if ((lge_dm_tty->set_logging == 1)
-                && (driver->logging_mode == DM_APP_MODE)) {
+		mutex_lock(&driver->diagchar_mutex);
 
-            lge_dm_tty->set_logging = 0;
 
-            for (j = 0; j < lge_dm_tty->num_tbl_entries; j++) {
-                entry = &lge_dm_tty->tbl[j];
-                if (entry->len <= 0)
-                    continue;
+		if ((lge_dm_tty->set_logging == 1)
+				&& (driver->logging_mode == DM_APP_MODE)) {
 
-                lge_dm_tty_modem_response(
-                    lge_dm_tty_drv,
-                    Primary_modem_chip,
-                    (void *)entry->buf,
-                    entry->len);
+			/* copy android data */
+			for (i = 0; i < driver->poolsize_write_struct;
+				i++) {
+				if (driver->buf_tbl[i].length > 0) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					(void *)driver->buf_tbl[i].buf,
+					driver->buf_tbl[i].length);
 
-                lge_dm_tty->ops->write_done(entry->buf, entry->len,
-                            entry->ctx, lge_dm_tty->ctx);
-                diag_ws_on_copy(DIAG_WS_MD);
-                spin_lock_irqsave(&entry->lock, flags);
-                entry->buf = NULL;
-                entry->len = 0;
-                entry->ctx = 0;
-                spin_unlock_irqrestore(&entry->lock, flags);
-            }
+					diagmem_free(driver, (unsigned char *)
+					(driver->buf_tbl[i].buf), POOL_TYPE_HDLC);
+					driver->buf_tbl[i].length = 0;
+					driver->buf_tbl[i].buf = 0;
 
-            diag_ws_on_copy_complete(DIAG_WS_MD);
+				}
+			}
 
-        }
+				/* copy modem data */
+				if (driver->in_busy_1 == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					driver->buf_in_1,
+					driver->write_ptr_1->length);
 
-        mutex_unlock(&driver->diagchar_mutex);
+					driver->in_busy_1 = 0;
+				}
 
-        if (kthread_should_stop())
-            break;
-        mdelay(1);
+				if (driver->in_busy_2 == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					driver->buf_in_2,
+					driver->write_ptr_2->length);
 
-    }
+					driver->in_busy_2 = 0;
+				}
 
-    return 0;
+				/* copy q6 data */
+				if (driver->in_busy_qdsp_1 == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					driver->buf_in_qdsp_1,
+					driver->write_ptr_qdsp_1->length);
+
+					driver->in_busy_qdsp_1 = 0;
+				}
+
+				if (driver->in_busy_qdsp_2 == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					driver->buf_in_qdsp_2,
+					driver->write_ptr_qdsp_2->length);
+
+					driver->in_busy_qdsp_2 = 0;
+				}
+
+				/* copy wncss data */
+				if (driver->in_busy_wcnss_1 == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					driver->buf_in_wcnss_1,
+					driver->write_ptr_wcnss_1->length);
+
+					driver->in_busy_wcnss_1 = 0;
+				}
+				/* copy wncss data */
+				if (driver->in_busy_wcnss_2 == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Primary_modem_chip,
+					driver->buf_in_wcnss_2,
+					driver->write_ptr_wcnss_2->length);
+
+					driver->in_busy_wcnss_2 = 0;
+				}
+
+
+#ifdef CONFIG_DIAG_SDIO_PIPE
+				/* copy 9K data over SDIO */
+				if (driver->in_busy_sdio == 1) {
+					lge_dm_tty_modem_response(
+					lge_dm_tty_drv,
+					Secondary_modem_chip,
+					driver->buf_in_sdio,
+					driver->write_ptr_mdm->length);
+
+					driver->in_busy_sdio = 0;
+				}
+#endif
+#ifdef CONFIG_DIAG_HSIC_PIPE
+		for (i = 0; i < driver->poolsize_hsic_write;
+		i++) {
+			if (driver->hsic_buf_tbl[i].length > 0) {
+				lge_dm_tty_modem_response(
+				lge_dm_tty_drv,
+				Secondary_modem_chip,
+				(void *)driver->hsic_buf_tbl[i].buf,
+				driver->hsic_buf_tbl[i].length);
+				
+				/* Return the buffer to the pool */
+				diagmem_free(driver, (unsigned char *)
+					(driver->hsic_buf_tbl[i].buf),
+					POOL_TYPE_HSIC);				
+				driver->hsic_buf_tbl[i].length = 0;
+				driver->hsic_buf_tbl[i].buf = 0;
+				driver->num_hsic_buf_tbl_entries--;
+			}
+		}
+#endif
+			lge_dm_tty->set_logging = 0;
+
+			if (lge_dm_tty_drv->
+				is_modem_open[Primary_modem_chip] == TRUE) {
+				if (driver->ch)
+					queue_work(driver->diag_wq,
+					&(driver->diag_read_smd_work));
+
+				if (driver->chqdsp)
+					queue_work(driver->diag_wq,
+					&(driver->diag_read_smd_qdsp_work));
+
+				if (driver->ch_wcnss)
+					queue_work(driver->diag_wq,
+					&(driver->diag_read_smd_wcnss_work));
+			}
+
+			if (lge_dm_tty_drv->
+				is_modem_open[Secondary_modem_chip] == TRUE) {
+#ifdef CONFIG_DIAG_SDIO_PIPE
+				if (driver->sdio_ch)
+					queue_work(driver->diag_sdio_wq,
+						&(driver->diag_read_sdio_work));
+#endif
+#ifdef CONFIG_DIAG_HSIC_PIPE
+				if (driver->hsic_ch)
+					queue_work(driver->diag_hsic_wq,
+						&(driver->diag_read_hsic_work));
+#endif
+			}
+
+		}
+
+		mutex_unlock(&driver->diagchar_mutex);
+
+		if (kthread_should_stop())
+			break;
+		mdelay(1);
+
+	}
+
+	return 0;
 
 }
 
 
 static void lge_dm_tty_unthrottle(struct tty_struct *tty)
 {
-    return;
+	return;
 }
 
 static int lge_dm_tty_write_room(struct tty_struct *tty)
 {
 
-    return DM_TTY_TX_MAX_PACKET_SIZE;
+	return DM_TTY_TX_MAX_PACKET_SIZE - dm_modem_response_length;
 }
 
 static int lge_dm_tty_write(struct tty_struct *tty, const unsigned char *buf,
-    int count)
+	int count)
 {
-    int result;
-    struct dm_tty *lge_dm_tty_drv = NULL;
+	int result;
+	struct dm_tty *lge_dm_tty_drv = NULL;
 
-    lge_dm_tty_drv = lge_dm_tty;
-    tty->driver_data = lge_dm_tty_drv;
-    lge_dm_tty_drv->tty_str = tty;
+	lge_dm_tty_drv = lge_dm_tty;
+	tty->driver_data = lge_dm_tty_drv;
+	lge_dm_tty_drv->tty_str = tty;
 
-    /* check the packet size */
-    if (count > DM_TTY_RX_MAX_PACKET_SIZE) {
-        pr_info(DM_TTY_MODULE_NAME ": %s:"
-        "lge_dm_tty_write error count = %d\n",
-            __func__, count);
-        return -EPERM;
-    }
-    result = lge_dm_tty_modem_request(lge_dm_tty_drv, buf, count);
-    return result;
+	/* check the packet size */
+	if (count > DM_TTY_RX_MAX_PACKET_SIZE) {
+		pr_info(DM_TTY_MODULE_NAME ": %s:"
+		"lge_dm_tty_write error count = %d\n",
+			__func__, count);
+		return -EPERM;
+	}
+	result = lge_dm_tty_modem_request(buf, count);
+	return result;
 
 }
 
 static int lge_dm_tty_open(struct tty_struct *tty, struct file *file)
 {
-    struct dm_tty *lge_dm_tty_drv = NULL;
+	struct dm_tty *lge_dm_tty_drv = NULL;
 
-    if (!tty) {
-        pr_err(DM_TTY_MODULE_NAME ": %s: NULL tty", __func__);
-        return -ENODEV;
-    }
+	if (!tty) {
+		pr_err(DM_TTY_MODULE_NAME ": %s: NULL tty", __func__);
+		return -ENODEV;
+	}
 
-    lge_dm_tty_drv = lge_dm_tty;
+	lge_dm_tty_drv = lge_dm_tty;
 
-    if (!lge_dm_tty_drv) {
-        pr_err(DM_TTY_MODULE_NAME ": %s:"
-        "NULL lge_dm_tty_drv", __func__);
-        return -ENODEV;
-    }
-#ifdef CONFIG_TTY_PORT
-    tty_port_tty_set(&dm_tty_port, tty);
-    dm_tty_port.low_latency = 1;
-#endif /* CONFIG_TTY_PORT */
-    tty->driver_data = lge_dm_tty_drv;
-    lge_dm_tty_drv->tty_str = tty;
+	if (!lge_dm_tty_drv) {
+		pr_err(DM_TTY_MODULE_NAME ": %s:"
+		"NULL lge_dm_tty_drv", __func__);
+		return -ENODEV;
+	}
 
-    if (lge_dm_tty_drv->tty_state == DM_TTY_OPEN) {
-        pr_err(DM_TTY_MODULE_NAME ": %s:"
-        "tty is already open", __func__);
-        return -EBUSY;
-    }
+	tty->driver_data = lge_dm_tty_drv;
+	lge_dm_tty_drv->tty_str = tty;
 
-    /* support max = 64KB */
-    set_bit(TTY_NO_WRITE_SPLIT, &lge_dm_tty_drv->tty_str->flags);
+	if (lge_dm_tty_drv->tty_state == DM_TTY_OPEN) {
+		pr_err(DM_TTY_MODULE_NAME ": %s:"
+		"tty is already open", __func__);
+		return -EBUSY;
+	}
 
-    lge_dm_tty_drv->tty_ts = kthread_run(lge_dm_tty_read_thread, NULL,
-        "lge_dm_tty_thread");
+	/* support max = 64KB */
+	set_bit(TTY_NO_WRITE_SPLIT, &lge_dm_tty_drv->tty_str->flags);
 
-    lge_dm_tty_drv->tty_state = DM_TTY_OPEN;
+	lge_dm_tty_drv->tty_ts = kthread_run(lge_dm_tty_read_thread, NULL,
+		"lge_dm_tty_thread");
 
-    pr_info(DM_TTY_MODULE_NAME ": %s: TTY device open\n", __func__);
+	lge_dm_tty_drv->tty_state = DM_TTY_OPEN;
 
-    lge_dm_tty_drv->logging_mode = DM_APP_ODM;
-    lge_dm_tty_drv->set_logging= 0;
+	pr_info(DM_TTY_MODULE_NAME ": %s: TTY device open\n", __func__);
 
-    dm_modem_response_length = 0;
-    dm_modem_request_length = 0;
+	lge_dm_tty_drv->set_logging = 0;
 
-    dm_rx_start_flag = 0x2B1A;
-    dm_rx_end_flag = 0x7E6D;
+	dm_modem_response_length = 0;
+	dm_modem_request_length = 0;
 
-    dm_modem_response_header->dm_router_cmd = DM_APP_MODEM_RESPONSE;
-    dm_modem_response_header->dm_router_type = DM_APP_NOTICE;
+	dm_rx_start_flag = 0x2B1A;
+	dm_rx_end_flag = 0x7E6D;
 
-    lge_dm_tty_drv->dm_wq = create_singlethread_workqueue("dm_wq");
-    INIT_WORK(&(lge_dm_tty_drv->dm_usb_work), lge_dm_usb_fn);
-    INIT_WORK(&(lge_dm_tty_drv->dm_dload_work), lge_dm_dload_fn);
-
-    return 0;
+	return 0;
 
 }
 
 static void lge_dm_tty_close(struct tty_struct *tty, struct file *file)
 {
-    struct dm_tty *lge_dm_tty_drv = NULL;
+	struct dm_tty *lge_dm_tty_drv = NULL;
 
-    lge_dm_tty_drv = lge_dm_tty;
-    tty->driver_data = lge_dm_tty_drv;
-    lge_dm_tty_drv->tty_str = tty;
+	lge_dm_tty_drv = lge_dm_tty;
+	tty->driver_data = lge_dm_tty_drv;
+	lge_dm_tty_drv->tty_str = tty;
 
-    clear_bit(TTY_NO_WRITE_SPLIT, &lge_dm_tty_drv->tty_str->flags);
+	clear_bit(TTY_NO_WRITE_SPLIT, &lge_dm_tty_drv->tty_str->flags);
 
-    if (!tty) {
-        pr_err(DM_TTY_MODULE_NAME ": %s: NULL tty", __func__);
-        return;
-    }
+	if (!tty) {
+		pr_err(DM_TTY_MODULE_NAME ": %s: NULL tty", __func__);
+		return;
+	}
 
-    lge_dm_tty_drv = tty->driver_data;
+	lge_dm_tty_drv = tty->driver_data;
 
-    if (!lge_dm_tty_drv) {
-        pr_err(DM_TTY_MODULE_NAME ": %s: NULL sdio_tty_drv", __func__);
-        return;
-    }
+	if (!lge_dm_tty_drv) {
+		pr_err(DM_TTY_MODULE_NAME ": %s: NULL sdio_tty_drv", __func__);
+		return;
+	}
 
-    if (lge_dm_tty_drv->tty_state != DM_TTY_OPEN) {
-        pr_err(DM_TTY_MODULE_NAME ": %s: TTY device was not opened\n",
-            __func__);
-        return;
-    }
+	if (lge_dm_tty_drv->tty_state != DM_TTY_OPEN) {
+		pr_err(DM_TTY_MODULE_NAME ": %s: TTY device was not opened\n",
+			__func__);
+		return;
+	}
 
-    lge_dm_tty_drv->logging_mode = DM_APP_ODM;
-    lge_dm_tty_drv->set_logging = 1;
-    wake_up_interruptible(&lge_dm_tty_drv->waitq);
+	kthread_stop(lge_dm_tty_drv->tty_ts);
 
-    kthread_stop(lge_dm_tty_drv->tty_ts);
+	lge_dm_tty_drv->tty_state = DM_TTY_CLOSED;
 
-    lge_dm_tty_drv->tty_state = DM_TTY_CLOSED;
+	pr_info(DM_TTY_MODULE_NAME ": %s: TTY device closed\n", __func__);
 
-    pr_info(DM_TTY_MODULE_NAME ": %s: TTY device closed\n", __func__);
-
-    cancel_work_sync(&(lge_dm_tty_drv->dm_usb_work));
-    cancel_work_sync(&(lge_dm_tty_drv->dm_dload_work));
-    destroy_workqueue(lge_dm_tty_drv->dm_wq);
-#ifdef CONFIG_TTY_PORT
-    tty_port_tty_set(&dm_tty_port, NULL);
-#endif /* CONFIG_TTY_PORT */
-    return;
+	return;
 
 }
 
 static int lge_dm_tty_ioctl(struct tty_struct *tty, unsigned int cmd,
-    unsigned long arg)
+	unsigned long arg)
 {
-    short result;
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-    short modem_number = Secondary_modem_chip;
-#else
-    short modem_number = Primary_modem_chip;
-#endif /*CONFIG_DIAGFWD_BRIDGE_CODE*/
+	short modem_number, result;
+	struct dm_tty *lge_dm_tty_drv = NULL;
+	int is_all_closed, i;
 
+	lge_dm_tty_drv = lge_dm_tty;
+	tty->driver_data = lge_dm_tty_drv;
+	lge_dm_tty_drv->tty_str = tty;
 
-    struct dm_tty *lge_dm_tty_drv = NULL;
-    int status = 0;
-    int i = 0;
-    unsigned long flags;
+	if (_IOC_TYPE(cmd) != DM_TTY_IOCTL_MAGIC)
+		return -EINVAL;
 
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-    int index=0;
-    unsigned long spin_lock_flags;
+	switch (cmd) {
+	case DM_TTY_MODEM_OPEN:
+		if (copy_from_user((void *)&modem_number, (const void *)arg,
+			sizeof(modem_number)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_OPEN modem_number = %d\n",
+					__func__, modem_number);
+
+		if (lge_dm_tty_drv->is_modem_open[modem_number] == FALSE)
+			lge_dm_tty_drv->is_modem_open[modem_number] = TRUE;
+		else
+			pr_err(DM_TTY_MODULE_NAME ": %s: already open "
+				"modem_number = %d", __func__, modem_number);
+
+		diagfwd_disconnect();
+
+#ifdef CONFIG_DIAG_HSIC_PIPE
+		diagfwd_disconnect_hsic(1);
+
+		diagfwd_cancel_hsic();
+		diagfwd_connect_hsic(0);
 #endif
 
-    result = 0;
-    lge_dm_tty_drv = lge_dm_tty;
-    tty->driver_data = lge_dm_tty_drv;
-    lge_dm_tty_drv->tty_str = tty;
 
-    if (_IOC_TYPE(cmd) != DM_TTY_IOCTL_MAGIC)
-        return -EINVAL;
+		/* change path to DM APP */
+		mutex_lock(&driver->diagchar_mutex);
+		driver->logging_mode = DM_APP_MODE;
+		mutex_unlock(&driver->diagchar_mutex);
 
-    switch (cmd) {
-    case DM_TTY_MODEM_OPEN_SDM:
-        if(lge_dm_tty_drv->logging_mode == DM_APP_SDM)
-        {
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-            "already DM_TTY_MODEM_OPEN_SDM\n", __func__);
+		if (modem_number == Primary_modem_chip) {
+			driver->in_busy_1 = 0;
+			driver->in_busy_2 = 0;
+			driver->in_busy_qdsp_1 = 0;
+			driver->in_busy_qdsp_2 = 0;
+			driver->in_busy_wcnss_1 = 0;
+			driver->in_busy_wcnss_2 = 0;
+			/* Poll SMD channels to check for data*/
+			if (driver->ch)
+				queue_work(driver->diag_wq,
+					&(driver->diag_read_smd_work));
 
-            result = TRUE;
+			if (driver->chqdsp)
+				queue_work(driver->diag_wq,
+					&(driver->diag_read_smd_qdsp_work));
 
-            if (copy_to_user((void *)arg, (const void *)&result,
-                sizeof(result)) == 0)
-                pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                    "already DM_TTY_MODEM_OPEN_SDM"
-                    "result = %d\n", __func__, result);
-
-            break;
-        }
-
-        lge_dm_tty_drv->logging_mode = DM_APP_SDM;
-
-        pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-        "DM_TTY_MODEM_OPEN_SDM\n", __func__);
-
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-        for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-            if ((diag_bridge[index].usb_connected == 1) && (diag_hsic[index].count_hsic_pool == N_MDM_WRITE)) {
-                spin_lock_irqsave(&diag_hsic[index].hsic_spinlock,spin_lock_flags);
-                diag_hsic[index].count_hsic_pool = 0;
-                spin_unlock_irqrestore(&diag_hsic[index].hsic_spinlock,spin_lock_flags);
-            }
-
-            diag_hsic[index].num_hsic_buf_tbl_entries = 0;
-            for (i = 0; i < diag_hsic[index].poolsize_hsic_write; i++) {
-                if (diag_hsic[index].hsic_buf_tbl[index].buf) {
-                    /* Return the buffer to the pool */
-                    diagmem_free(driver, (unsigned char *)
-                        (diag_hsic[index].hsic_buf_tbl[index].buf),
-                        index+POOL_TYPE_HSIC);
-                    diag_hsic[index].hsic_buf_tbl[index].buf = 0;
-                }
-                diag_hsic[index].hsic_buf_tbl[index].length = 0;
-            }
-        }
-
-        diagfwd_cancel_hsic(REOPEN_HSIC); // QCT 161032 migration - NEED TO CHECK
-        diagfwd_connect_bridge(0);
-#endif /* CONFIG_DIAGFWD_BRIDGE_CODE */
-
-        /* change path to DM APP */
-        mutex_lock(&driver->diagchar_mutex);
-        driver->logging_mode = DM_APP_MODE;
-        mutex_unlock(&driver->diagchar_mutex);
-
-        if (modem_number == Primary_modem_chip) {
-            if (driver->rsp_buf_busy) {
-                spin_lock_irqsave(&driver->rsp_buf_busy_lock, flags);
-                driver->rsp_buf_busy = 0;
-                spin_unlock_irqrestore(&driver->rsp_buf_busy_lock, flags);
-            }
-
-            for (i = 0; i < NUM_SMD_DATA_CHANNELS; i++) {
-                spin_lock_irqsave(&driver->smd_data[i].in_busy_lock, flags);
-                driver->smd_data[i].in_busy_1 = 0;
-                driver->smd_data[i].in_busy_2 = 0;
-                spin_unlock_irqrestore(&driver->smd_data[i].in_busy_lock, flags);
-
-                /* Poll SMD data channels to check for data */
-                queue_work(driver->smd_data[i].wq,
-                    &(driver->smd_data[i].diag_read_smd_work));
-            }
-
-            for (i = 0; i < NUM_SMD_CMD_CHANNELS; i++) {
-                spin_lock_irqsave(&driver->smd_cmd[i].in_busy_lock, flags);
-                driver->smd_cmd[i].in_busy_1 = 0;
-                driver->smd_cmd[i].in_busy_2 = 0;
-                spin_unlock_irqrestore(&driver->smd_cmd[i].in_busy_lock, flags);
-
-                /* Poll SMD data channels to check for data */
-                queue_work(driver->diag_wq,
-                    &(driver->smd_cmd[i].diag_read_smd_work));
-            }
-        } else if (modem_number == Secondary_modem_chip) {
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-                    for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-                        /* Read data from the hsic */
-                        if (diag_hsic[index].hsic_ch)
-                            queue_work(diag_bridge[index].wq,
-                                   &(diag_hsic[index].
-                                     diag_read_hsic_work));
-                    }
-#endif /* CONFIG_DIAGFWD_BRIDGE_CODE */
-        } else {
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_MODEM_OPEN_SDM"
-                "error modem_number = %d\n",
-                    __func__, modem_number);
-        }
-
-        result = TRUE;
-
-        if (copy_to_user((void *)arg, (const void *)&result,
-            sizeof(result)) == 0)
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_MODEM_OPEN_SDM"
-                "result = %d\n", __func__, result);
-
-        break;
-
-    case DM_TTY_MODEM_CLOSE_SDM:
-        lge_dm_tty_drv->logging_mode = DM_APP_ODM;
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_MODEM_CLOSE_SDM, modem_number = %d\n",
-                    __func__, modem_number);
-
-        lge_dm_tty_drv->set_logging = 0;
-
-        /* change path to USB driver */
-        mutex_lock(&driver->diagchar_mutex);
-        driver->logging_mode = USB_MODE;
-        mutex_unlock(&driver->diagchar_mutex);
-
-        result = TRUE;
-
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-        for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-
-            diag_hsic[index].num_hsic_buf_tbl_entries = 0;
-            for (i = 0; i < diag_hsic[index].poolsize_hsic_write; i++) {
-                if (diag_hsic[index].hsic_buf_tbl[index].buf) {
-                    /* Return the buffer to the pool */
-                    diagmem_free(driver, (unsigned char *)
-                        (diag_hsic[index].hsic_buf_tbl[index].buf),
-                        index+POOL_TYPE_HSIC);
-                    diag_hsic[index].hsic_buf_tbl[index].buf = 0;
-                }
-                diag_hsic[index].hsic_buf_tbl[index].length = 0;
-            }
-        }
-        diagfwd_cancel_hsic(REOPEN_HSIC); // QCT 161032 migration - NEED TO CHECK
-        diagfwd_connect_bridge(0);
+			if (driver->ch_wcnss)
+				queue_work(driver->diag_wq,
+					&(driver->diag_read_smd_wcnss_work));
+		} else if (modem_number == Secondary_modem_chip) {
+#ifdef CONFIG_DIAG_SDIO_PIPE
+			driver->in_busy_sdio = 0;
+			/* Poll SDIO channel to check for data */
+			if (driver->sdio_ch)
+				queue_work(driver->diag_sdio_wq,
+					&(driver->diag_read_sdio_work));
 #endif
 
-        if (copy_to_user((void *)arg, (const void *)&result,
-            sizeof(result)) == 0)
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_MODEM_CLOSE_SDM"
-                "result = %d\n", __func__, result);
-
-        break;
-    case DM_TTY_MODEM_OPEN_ODM:
-        lge_dm_tty_drv->logging_mode = DM_APP_ODM;
-
-        pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                        "DM_TTY_MODEM_OPEN_ODM, modem_number = %d\n", __func__, modem_number);
-
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-        for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-            if ((diag_bridge[index].usb_connected == 1) && (diag_hsic[index].count_hsic_pool == N_MDM_WRITE)) {
-                spin_lock_irqsave(&diag_hsic[index].hsic_spinlock,spin_lock_flags);
-                diag_hsic[index].count_hsic_pool = 0;
-                spin_unlock_irqrestore(&diag_hsic[index].hsic_spinlock,spin_lock_flags);
-            }
-
-            diag_hsic[index].num_hsic_buf_tbl_entries = 0;
-            for (i = 0; i < diag_hsic[index].poolsize_hsic_write; i++) {
-                if (diag_hsic[index].hsic_buf_tbl[index].buf) {
-                    /* Return the buffer to the pool */
-                    diagmem_free(driver, (unsigned char *)
-                        (diag_hsic[index].hsic_buf_tbl[index].buf),
-                        index+POOL_TYPE_HSIC);
-                    diag_hsic[index].hsic_buf_tbl[index].buf = 0;
-                }
-                diag_hsic[index].hsic_buf_tbl[index].length = 0;
-            }
-        }
-
-        diagfwd_cancel_hsic(REOPEN_HSIC); // QCT 161032 migration - NEED TO CHECK
-        diagfwd_connect_bridge(0);
-#endif /* CONFIG_DIAGFWD_BRIDGE_CODE */
-        /* change path to DM DEV */
-        mutex_lock(&driver->diagchar_mutex);
-        driver->logging_mode = DM_APP_MODE;
-        mutex_unlock(&driver->diagchar_mutex);
-
-        if (modem_number == Primary_modem_chip) {
-            if (driver->rsp_buf_busy) {
-                spin_lock_irqsave(&driver->rsp_buf_busy_lock, flags);
-                driver->rsp_buf_busy = 0;
-                spin_unlock_irqrestore(&driver->rsp_buf_busy_lock, flags);
-            }
-
-            for (i = 0; i < NUM_SMD_DATA_CHANNELS; i++) {
-                spin_lock_irqsave(&driver->smd_data[i].in_busy_lock, flags);
-                driver->smd_data[i].in_busy_1 = 0;
-                driver->smd_data[i].in_busy_2 = 0;
-                spin_unlock_irqrestore(&driver->smd_data[i].in_busy_lock, flags);
-
-                /* Poll SMD data channels to check for data */
-                queue_work(driver->smd_data[i].wq,
-                    &(driver->smd_data[i].diag_read_smd_work));
-            }
-
-            for (i = 0; i < NUM_SMD_CMD_CHANNELS; i++) {
-                spin_lock_irqsave(&driver->smd_cmd[i].in_busy_lock, flags);
-                driver->smd_cmd[i].in_busy_1 = 0;
-                driver->smd_cmd[i].in_busy_2 = 0;
-                spin_unlock_irqrestore(&driver->smd_cmd[i].in_busy_lock, flags);
-
-                /* Poll SMD data channels to check for data */
-                queue_work(driver->diag_wq,
-                    &(driver->smd_cmd[i].diag_read_smd_work));
-            }
-        } else if (modem_number == Secondary_modem_chip) {
-
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-                    for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-                        /* Read data from the hsic */
-                        if (diag_hsic[index].hsic_ch)
-                            queue_work(diag_bridge[index].wq,
-                                   &(diag_hsic[index].
-                                     diag_read_hsic_work));
-                    }
-#endif /* CONFIG_DIAGFWD_BRIDGE_CODE */
-
-
-        } else {
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_IOCTL_MODEM_OPEN"
-                "error modem_number = %d\n",
-                    __func__, modem_number);
-        }
-
-        break;
-
-    case DM_TTY_MODEM_CLOSE_ODM:
-        lge_dm_tty_drv->logging_mode = DM_APP_ODM;
-
-        pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-            "DM_TTY_MODEM_CLOSE_ODM, modem_number = %d\n",
-                __func__, modem_number);
-        result = TRUE;
-
-        lge_dm_tty_drv->set_logging = 0;
-
-        /* change path to USB driver */
-        mutex_lock(&driver->diagchar_mutex);
-        driver->logging_mode = USB_MODE;
-        mutex_unlock(&driver->diagchar_mutex);
-
-#ifdef CONFIG_DIAGFWD_BRIDGE_CODE
-        for (index = 0; index < MAX_HSIC_DATA_CH; index++) {
-            diag_hsic[index].num_hsic_buf_tbl_entries = 0;
-            for (i = 0; i < diag_hsic[index].poolsize_hsic_write; i++) {
-                if (diag_hsic[index].hsic_buf_tbl[index].buf) {
-                    /* Return the buffer to the pool */
-                    diagmem_free(driver, (unsigned char *)
-                        (diag_hsic[index].hsic_buf_tbl[index].buf),
-                        index+POOL_TYPE_HSIC);
-                    diag_hsic[index].hsic_buf_tbl[index].buf = 0;
-                }
-                diag_hsic[index].hsic_buf_tbl[index].length = 0;
-            }
-        }
-        diagfwd_cancel_hsic(REOPEN_HSIC); // QCT 161032 migration - NEED TO CHECK
-        diagfwd_connect_bridge(0);
+#ifdef CONFIG_DIAG_HSIC_PIPE
+			driver->num_hsic_buf_tbl_entries = 0;
+			for (i = 0; i < driver->poolsize_hsic_write; i++) {
+				driver->hsic_buf_tbl[i].buf = 0;
+				driver->hsic_buf_tbl[i].length = 0;
+			}
 #endif
-        if (copy_to_user((void *)arg, (const void *)&result,
-            sizeof(result)) == 0)
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_MODEM_CLOSE_ODM"
-                "result = %d\n", __func__, result);
+		} else {
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_OPEN"
+				"error modem_number = %d\n",
+					__func__, modem_number);
+		}
 
-      break;
+		result = lge_dm_tty_drv->is_modem_open[modem_number];
 
-    case DM_TTY_MODEM_RESET:
-        // not supported
-        //status = subsys_modem_restart();
-        result = TRUE;
+		if (copy_to_user((void *)arg, (const void *)&result,
+			sizeof(result)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_OPEN"
+				"result = %d\n", __func__, result);
+		break;
 
-        if (copy_to_user((void *)arg, (const void *)&status,
-            sizeof(result)) == 0)
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-                "DM_TTY_MODEM_RESET"
-                "result = %d\n", __func__, result);
-        break;
+	case DM_TTY_MODEM_CLOSE:
+		if (copy_from_user((void *)&modem_number, (const void *)arg,
+			sizeof(modem_number)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_CLOSE modem_number = %d\n",
+					__func__, modem_number);
 
-    case DM_TTY_MODEM_CRASH:
-#ifdef CONFIG_DIAG_BRIDGE_CODE
-            subsystem_restart("external_modem");
-            result = TRUE;
-#else
-            subsystem_restart("modem");
-            result = TRUE;
+		if (modem_number == 0) {
+
+			/* close all modem chip */
+			for (i = 0; i < NUM_MODEM_CHIP + 1; i++)
+				lge_dm_tty_drv->is_modem_open[i] = FALSE;
+
+			result = TRUE;
+
+			pr_err(DM_TTY_MODULE_NAME ": %s: close all modem chip"
+					, __func__);
+
+		} else {
+
+			if (lge_dm_tty_drv->is_modem_open[modem_number] == TRUE)
+				lge_dm_tty_drv->is_modem_open[modem_number] =
+					FALSE;
+			else
+				pr_err(DM_TTY_MODULE_NAME ": %s: "
+					"already closed "
+					"modem_number = %d", __func__,
+					modem_number);
+
+			/* check all modem chip closed */
+			is_all_closed = TRUE;
+
+		for (i = 0; i < NUM_MODEM_CHIP + 1; i++) {
+				if (lge_dm_tty_drv->is_modem_open[i] == TRUE)
+					is_all_closed = FALSE;
+			}
+
+			result = is_all_closed;
+
+		}
+
+		if (result == TRUE) {
+
+			lge_dm_tty->set_logging = 0;
+
+			/* change path to USB driver */
+			mutex_lock(&driver->diagchar_mutex);
+			driver->logging_mode = USB_MODE;
+			mutex_unlock(&driver->diagchar_mutex);
+
+			if (driver->usb_connected == 0)
+				diagfwd_disconnect();
+			else
+				diagfwd_connect();
+
+#ifdef CONFIG_DIAG_HSIC_PIPE
+			driver->num_hsic_buf_tbl_entries = 0;
+			for (i = 0; i < driver->poolsize_hsic_write; i++) {
+				if (driver->hsic_buf_tbl[i].buf) {
+					/* Return the buffer to the pool */
+					diagmem_free(driver, (unsigned char *)
+						(driver->hsic_buf_tbl[i].buf),
+						POOL_TYPE_HSIC);
+					driver->hsic_buf_tbl[i].buf = 0;
+					driver->hsic_buf_tbl[i].length = 0;
+				}
+			}
+			
+			if (driver->usb_mdm_connected == 0)
+				diagfwd_disconnect_hsic(0);
+			else
+				diagfwd_connect_hsic(0);
 #endif
 
-        if (copy_to_user((void *)arg, (const void *)&result,
-        sizeof(result)) == 0)
-        pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-            "DM_TTY_MODEM_CRASH"
-            "result = %d\n", __func__, result);
-    break;
-  case DM_TTY_MODEM_DEBUGGER:
-/*
-    memset(rw_buf, 0, sizeof(rw_buf));
-    strcpy(rw_buf,ssr_noti);
-    if (copy_to_user((void *)arg, &rw_buf, sizeof(rw_buf))){
-            pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
-            "DM_TTY_MODEM_DEBUGGER error! "
-            "rw_buf = %s\n", __func__, rw_buf);
-            return -EFAULT;
-      }
+		}
 
-      printk("rw_buf = %s\n", rw_buf);
-*/
-  break;
+		if (copy_to_user((void *)arg, (const void *)&result,
+			sizeof(result)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_CLOSE"
+				"result = %d\n", __func__, result);
+		break;
 
-    default:
-        pr_info(DM_TTY_MODULE_NAME ": %s:"
-        "lge_dm_tty_ioctl error\n", __func__);
-        break;
+	case DM_TTY_MODEM_STATUS:
+		if (copy_from_user((void *)&modem_number, (const void *)arg,
+			sizeof(modem_number)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_STATUS modem_number = %d\n",
+					__func__, modem_number);
 
-    }
+		result = lge_dm_tty_drv->is_modem_open[modem_number];
 
-    return 0;
+		if (copy_to_user((void *)arg, (const void *)&result,
+			sizeof(result)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_MODEM_STATUS"
+				"result = %d\n", __func__, result);
+		break;
+
+	case DM_TTY_DATA_TO_APP:
+		if (copy_from_user((void *)&modem_number, (const void *)arg,
+			sizeof(modem_number)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_DATA_TO_APP modem_number = %d\n",
+					__func__, modem_number);
+
+		if (copy_to_user((void *)arg, (const void*)&result,
+			sizeof(result)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_DATA_TO_APP"
+				"result = %d\n", __func__, result);
+		break;
+
+	case DM_TTY_DATA_TO_USB:
+		if (copy_from_user((void *)&modem_number, (const void *)arg,
+			sizeof(modem_number)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_DATA_TO_USB"
+				"modem_number = %d\n", __func__, modem_number);
+
+		if (copy_to_user((void *)arg, (const void *)&result,
+			sizeof(result)) == 0)
+			pr_info(DM_TTY_MODULE_NAME ": %s: lge_dm_tty_ioctl "
+				"DM_TTY_IOCTL_DATA_TO_USB"
+				"result = %d\n", __func__, result);
+		break;
+
+	default:
+		pr_info(DM_TTY_MODULE_NAME ": %s:"
+		"lge_dm_tty_ioctl error\n", __func__);
+		break;
+
+	}
+
+	return 0;
 
 }
 
 static const struct tty_operations lge_dm_tty_ops = {
-    .open = lge_dm_tty_open,
-    .close = lge_dm_tty_close,
-    .write = lge_dm_tty_write,
-    .write_room = lge_dm_tty_write_room,
-    .unthrottle = lge_dm_tty_unthrottle,
-    .ioctl = lge_dm_tty_ioctl,
+	.open = lge_dm_tty_open,
+	.close = lge_dm_tty_close,
+	.write = lge_dm_tty_write,
+	.write_room = lge_dm_tty_write_room,
+	.unthrottle = lge_dm_tty_unthrottle,
+	.ioctl = lge_dm_tty_ioctl,
 };
 
 static int __init lge_dm_tty_init(void)
 {
-    int ret = 0;
-    struct device *tty_dev;
-    struct dm_tty *lge_dm_tty_drv;
-#ifdef CONFIG_TTY_PORT
-    tty_port_init(&dm_tty_port);
-#endif /* CONFIG_TTY_PORT */
-    pr_info(DM_TTY_MODULE_NAME ": %s\n", __func__);
+	int i, ret = 0;
+	struct device *tty_dev;
+	struct dm_tty *lge_dm_tty_drv;
 
-    if(lge_dm_tty != NULL)
-    {
-        lge_dm_tty_drv = lge_dm_tty;
-    }
-    else
-    {
-        lge_dm_tty_drv = kzalloc(sizeof(struct dm_tty), GFP_KERNEL);
-        if (lge_dm_tty_drv == NULL) {
-            pr_info(DM_TTY_MODULE_NAME "%s:"
-            "failed to allocate lge_dm_tty", __func__);
-            return 0;
-        }
+	pr_info(DM_TTY_MODULE_NAME ": %s\n", __func__);
 
-        lge_dm_tty = lge_dm_tty_drv;
-    }
+	lge_dm_tty_drv = kzalloc(sizeof(struct dm_tty), GFP_KERNEL);
+	if (lge_dm_tty_drv == NULL) {
+		pr_info(DM_TTY_MODULE_NAME "%s:"
+		"failed to allocate lge_dm_tty", __func__);
+		return 0;
+	}
 
-    lge_dm_tty_drv->tty_drv = alloc_tty_driver(MAX_DM_TTY_DRV);
+	lge_dm_tty = lge_dm_tty_drv;
 
-    if (!lge_dm_tty_drv->tty_drv) {
-        pr_info(DM_TTY_MODULE_NAME ": %s - tty_drv is NULL", __func__);
-        kfree(lge_dm_tty_drv);
-        return 0;
-    }
+	lge_dm_tty_drv->tty_drv = alloc_tty_driver(MAX_DM_TTY_DRV);
 
-    lge_dm_tty_drv->tty_drv->name = "lge_dm_tty";
-    lge_dm_tty_drv->tty_drv->owner = THIS_MODULE;
-    lge_dm_tty_drv->tty_drv->driver_name = "lge_dm_tty";
-    /* uses dynamically assigned dev_t values */
-    lge_dm_tty_drv->tty_drv->type = TTY_DRIVER_TYPE_SERIAL;
-    lge_dm_tty_drv->tty_drv->subtype = SERIAL_TYPE_NORMAL;
-    lge_dm_tty_drv->tty_drv->flags = TTY_DRIVER_REAL_RAW
-        | TTY_DRIVER_DYNAMIC_DEV
-        | TTY_DRIVER_RESET_TERMIOS;
+	if (!lge_dm_tty_drv->tty_drv) {
+		pr_info(DM_TTY_MODULE_NAME ": %s - tty_drv is NULL", __func__);
+		kfree(lge_dm_tty_drv);
+		return 0;
+	}
 
-    /* initializing the tty driver */
-    lge_dm_tty_drv->tty_drv->init_termios = tty_std_termios;
-    lge_dm_tty_drv->tty_drv->init_termios.c_iflag = IGNBRK | IGNPAR;
-    lge_dm_tty_drv->tty_drv->init_termios.c_oflag = 0;
-    lge_dm_tty_drv->tty_drv->init_termios.c_cflag =
-        B9600 | CS8 | CREAD | HUPCL | CLOCAL;
-    lge_dm_tty_drv->tty_drv->init_termios.c_lflag = 0;
+	lge_dm_tty_drv->tty_drv->name = "lge_dm_tty";
+	lge_dm_tty_drv->tty_drv->owner = THIS_MODULE;
+	lge_dm_tty_drv->tty_drv->driver_name = "lge_dm_tty";
+	/* uses dynamically assigned dev_t values */
+	lge_dm_tty_drv->tty_drv->type = TTY_DRIVER_TYPE_SERIAL;
+	lge_dm_tty_drv->tty_drv->subtype = SERIAL_TYPE_NORMAL;
+	lge_dm_tty_drv->tty_drv->flags = TTY_DRIVER_REAL_RAW
+		| TTY_DRIVER_DYNAMIC_DEV
+		| TTY_DRIVER_RESET_TERMIOS;
 
-    tty_set_operations(lge_dm_tty_drv->tty_drv, &lge_dm_tty_ops);
+	/* initializing the tty driver */
+	lge_dm_tty_drv->tty_drv->init_termios = tty_std_termios;
+	lge_dm_tty_drv->tty_drv->init_termios.c_iflag = IGNBRK | IGNPAR;
+	lge_dm_tty_drv->tty_drv->init_termios.c_oflag = 0;
+	lge_dm_tty_drv->tty_drv->init_termios.c_cflag =
+		B9600 | CS8 | CREAD | HUPCL | CLOCAL;
+	lge_dm_tty_drv->tty_drv->init_termios.c_lflag = 0;
 
-#ifdef CONFIG_TTY_PORT
-    tty_port_link_device(&dm_tty_port, lge_dm_tty_drv->tty_drv, 0);
-#endif /* CONFIG_TTY_PORT */
-    ret = tty_register_driver(lge_dm_tty_drv->tty_drv);
+	tty_set_operations(lge_dm_tty_drv->tty_drv, &lge_dm_tty_ops);
 
-    if (ret) {
-        put_tty_driver(lge_dm_tty_drv->tty_drv);
-#ifdef CONFIG_TTY_PORT
-        tty_port_destroy(&dm_tty_port);
-#endif /* CONFIG_TTY_PORT */
-        pr_info(DM_TTY_MODULE_NAME ": %s:"
-        "tty_register_driver() ""failed\n",
-            __func__);
+	ret = tty_register_driver(lge_dm_tty_drv->tty_drv);
 
-        lge_dm_tty_drv->tty_drv = NULL;
-        kfree(lge_dm_tty_drv);
-        return 0;
-    }
+	if (ret) {
+		put_tty_driver(lge_dm_tty_drv->tty_drv);
+		pr_info(DM_TTY_MODULE_NAME ": %s:"
+		"tty_register_driver() ""failed\n",
+			__func__);
 
-    tty_dev = tty_register_device(lge_dm_tty_drv->tty_drv, 0, NULL);
+		lge_dm_tty_drv->tty_drv = NULL;
+		kfree(lge_dm_tty_drv);
+		return 0;
+	}
 
-    if (IS_ERR(tty_dev)) {
-        pr_info(DM_TTY_MODULE_NAME ": %s:"
-        "tty_register_device() " "failed\n",
-            __func__);
-        tty_unregister_driver(lge_dm_tty_drv->tty_drv);
-        put_tty_driver(lge_dm_tty_drv->tty_drv);
-#ifdef CONFIG_TTY_PORT
-        tty_port_destroy(&dm_tty_port);
-#endif /* CONFIG_TTY_PORT */
-        kfree(lge_dm_tty_drv);
-        return 0;
-    }
+	tty_dev = tty_register_device(lge_dm_tty_drv->tty_drv, 0, NULL);
 
-    init_waitqueue_head(&lge_dm_tty_drv->waitq);
+	if (IS_ERR(tty_dev)) {
+		pr_info(DM_TTY_MODULE_NAME ": %s:"
+		"tty_register_device() " "failed\n",
+			__func__);
+		tty_unregister_driver(lge_dm_tty_drv->tty_drv);
+		put_tty_driver(lge_dm_tty_drv->tty_drv);
+		kfree(lge_dm_tty_drv);
+		return 0;
+	}
 
-    lge_dm_tty_drv->tty_state = DM_TTY_REGISTERED;
+	init_waitqueue_head(&lge_dm_tty_drv->waitq);
 
-    /* data initialization */
-    dm_modem_response = kzalloc(DM_TTY_TX_MAX_PACKET_SIZE, GFP_KERNEL);
-    if (dm_modem_response == NULL)
-        pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_response ""failed\n",
-            __func__);
+	lge_dm_tty_drv->tty_state = DM_TTY_REGISTERED;
 
-    dm_modem_request = kzalloc(DM_TTY_RX_MAX_PACKET_SIZE, GFP_KERNEL);
-    if (dm_modem_request == NULL)
-        pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_request ""failed\n",
-            __func__);
+	/* data initialization */
+	dm_modem_response = kzalloc(DM_TTY_TX_MAX_PACKET_SIZE, GFP_KERNEL);
+	if (dm_modem_response == NULL)
+		pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_response ""failed\n",
+			__func__);
 
-    dm_modem_response_header_length = sizeof(struct dm_router_header);
-    dm_modem_response_header = kzalloc(dm_modem_response_header_length,
-        GFP_KERNEL);
-    if (dm_modem_response_header == NULL)
-        pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_response_header "
-            "failed\n", __func__);
+	dm_modem_request = kzalloc(DM_TTY_RX_MAX_PACKET_SIZE, GFP_KERNEL);
+	if (dm_modem_request == NULL)
+		pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_request ""failed\n",
+			__func__);
 
-    dm_modem_request_header_length = sizeof(struct dm_router_header);
-    dm_modem_request_header = kzalloc(dm_modem_request_header_length,
-        GFP_KERNEL);
-    if (dm_modem_request_header == NULL)
-        pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_request_header "
-            "failed\n", __func__);
+	dm_modem_response_header_length = sizeof(struct dm_router_header);
+	dm_modem_response_header = kzalloc(dm_modem_response_header_length,
+		GFP_KERNEL);
+	if (dm_modem_response_header == NULL)
+		pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_response_header "
+			"failed\n", __func__);
 
-    dm_modem_response_body_length =
-        sizeof(struct dm_router_modem_response_body);
-    dm_modem_response_body = kzalloc(dm_modem_response_body_length,
-        GFP_KERNEL);
-    if (dm_modem_response_body == NULL)
-        pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_response_body "
-            "failed\n", __func__);
+	dm_modem_request_header_length = sizeof(struct dm_router_header);
+	dm_modem_request_header = kzalloc(dm_modem_request_header_length,
+		GFP_KERNEL);
+	if (dm_modem_request_header == NULL)
+		pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_request_header "
+			"failed\n", __func__);
 
-    return 0;
+	dm_modem_response_body_length =
+		sizeof(struct dm_router_modem_response_body);
+	dm_modem_response_body = kzalloc(dm_modem_response_body_length,
+		GFP_KERNEL);
+	if (dm_modem_response_body == NULL)
+		pr_info(DM_TTY_MODULE_NAME ": %s: dm_modem_response_body "
+			"failed\n", __func__);
+
+	for (i = 0; i < NUM_MODEM_CHIP + 1; i++)
+		lge_dm_tty_drv->is_modem_open[i] = FALSE;
+
+	return 0;
 
 }
 
 static void __exit lge_dm_tty_exit(void)
 {
-    int ret = 0;
-    struct dm_tty *lge_dm_tty_drv = NULL;
+	int ret = 0;
+	struct dm_tty *lge_dm_tty_drv = NULL;
 
-    lge_dm_tty_drv = lge_dm_tty;
+	lge_dm_tty_drv = lge_dm_tty;
 
-    if (!lge_dm_tty_drv) {
-        pr_err(DM_TTY_MODULE_NAME ": %s:"
-        "NULL lge_dm_tty_drv", __func__);
-        return;
-    }
+	if (!lge_dm_tty_drv) {
+		pr_err(DM_TTY_MODULE_NAME ": %s:"
+		"NULL lge_dm_tty_drv", __func__);
+		return;
+	}
 
-    if (lge_dm_tty_drv->tty_state != DM_TTY_INITIAL) {
-        tty_unregister_device(lge_dm_tty_drv->tty_drv, 0);
+	if (lge_dm_tty_drv->tty_state != DM_TTY_INITIAL) {
+		tty_unregister_device(lge_dm_tty_drv->tty_drv, 0);
 
-        ret = tty_unregister_driver(lge_dm_tty_drv->tty_drv);
+		ret = tty_unregister_driver(lge_dm_tty_drv->tty_drv);
 
-        if (ret) {
-            pr_err(DM_TTY_MODULE_NAME ": %s: "
-                "tty_unregister_driver() failed\n", __func__);
-        }
+		if (ret) {
+			pr_err(DM_TTY_MODULE_NAME ": %s: "
+			    "tty_unregister_driver() failed\n", __func__);
+		}
 
-        put_tty_driver(lge_dm_tty_drv->tty_drv);
-        lge_dm_tty_drv->tty_state = DM_TTY_INITIAL;
-        lge_dm_tty_drv->tty_drv = NULL;
-    }
+		put_tty_driver(lge_dm_tty_drv->tty_drv);
+		lge_dm_tty_drv->tty_state = DM_TTY_INITIAL;
+		lge_dm_tty_drv->tty_drv = NULL;
+	}
 
-    kfree(dm_modem_response);
-    kfree(dm_modem_request);
-    kfree(dm_modem_response_header);
-    kfree(dm_modem_response_body);
+	kfree(dm_modem_response);
+	kfree(dm_modem_request);
+	kfree(dm_modem_response_header);
+	kfree(dm_modem_response_body);
 
-    pr_info(DM_TTY_MODULE_NAME ": %s: Freeing dm_tty structure", __func__);
-    kfree(lge_dm_tty_drv);
+	pr_info(DM_TTY_MODULE_NAME ": %s: Freeing dm_tty structure", __func__);
+	kfree(lge_dm_tty_drv);
 
-    return;
+	return;
 
 }
 
