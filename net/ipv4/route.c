@@ -1507,12 +1507,10 @@ static int __mkroute_input(struct sk_buff *skb,
 	}
 
 	do_cache = res->fi && !itag;
-	if (out_dev == in_dev && err &&
-        skb->protocol == htons(ETH_P_IP) &&
-        IN_DEV_TX_REDIRECTS(out_dev) &&
+	if (out_dev == in_dev && err && IN_DEV_TX_REDIRECTS(out_dev) &&
 	    (IN_DEV_SHARED_MEDIA(out_dev) ||
 	     inet_addr_onlink(out_dev, saddr, FIB_RES_GW(*res)))) {
-        IPCB(skb)->flags |= IPSKB_DOREDIRECT;
+		flags |= RTCF_DOREDIRECT;
 		do_cache = false;
 	}
 
@@ -2119,6 +2117,15 @@ struct rtable *__ip_route_output_key(struct net *net, struct flowi4 *fl4)
 		fl4->saddr = FIB_RES_PREFSRC(net, res);
 
 	dev_out = FIB_RES_DEV(res);
+
+    /*                                                                   */
+    if (dev_out == NULL) {
+        printk(KERN_DEBUG "dev_out is null\n");
+        rth = ERR_PTR(-ENETUNREACH);
+        goto out;
+    }
+    /*                                                                 */
+
 	fl4->flowi4_oif = dev_out->ifindex;
 
 
@@ -2255,8 +2262,6 @@ static int rt_fill_info(struct net *net,  __be32 dst, __be32 src,
 	r->rtm_flags	= (rt->rt_flags & ~0xFFFF) | RTM_F_CLONED;
 	if (rt->rt_flags & RTCF_NOTIFY)
 		r->rtm_flags |= RTM_F_NOTIFY;
-	if (IPCB(skb)->flags & IPSKB_DOREDIRECT)
-		r->rtm_flags |= RTCF_DOREDIRECT;
 
 	if (nla_put_be32(skb, RTA_DST, dst))
 		goto nla_put_failure;
