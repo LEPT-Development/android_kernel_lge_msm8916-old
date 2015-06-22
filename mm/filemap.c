@@ -34,15 +34,6 @@
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
 #include "internal.h"
-/*             
-  
-                                        
-                                             
-  
-                                  
- */
-#include "../fs/sreadahead_prof.h"
-/*             */
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
@@ -637,31 +628,6 @@ void end_page_writeback(struct page *page)
 	wake_up_page(page, PG_writeback);
 }
 EXPORT_SYMBOL(end_page_writeback);
-
-/*
- * After completing I/O on a page, call this routine to update the page
- * flags appropriately
- */
-void page_endio(struct page *page, int rw, int err)
-{
-	if (rw == READ) {
-		if (!err) {
-			SetPageUptodate(page);
-		} else {
-			ClearPageUptodate(page);
-			SetPageError(page);
-		}
-		unlock_page(page);
-	} else { /* rw == WRITE */
-		if (err) {
-			SetPageError(page);
-			if (page->mapping)
-				mapping_set_error(page->mapping, err);
-		}
-		end_page_writeback(page);
-	}
-}
-EXPORT_SYMBOL_GPL(page_endio);
 
 /**
  * __lock_page - get a lock on the page, assuming we need to sleep to get it
@@ -1669,15 +1635,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		/* No page in the page cache at all */
 		do_sync_mmap_readahead(vma, ra, file, offset);
 		count_vm_event(PGMAJFAULT);
-/*             
-  
-                                                         
-                                             
-  
-                             
- */
-		sreadahead_prof(file, 0, 0);
- /*              */
 		mem_cgroup_count_vm_event(vma->vm_mm, PGMAJFAULT);
 		ret = VM_FAULT_MAJOR;
 retry_find:

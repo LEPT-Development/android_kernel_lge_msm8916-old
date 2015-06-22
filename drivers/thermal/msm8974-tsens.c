@@ -921,74 +921,6 @@ static int tsens_tz_get_trip_temp(struct thermal_zone_device *thermal,
 	return 0;
 }
 
-#ifdef CONFIG_LGE_PM
-static int tsens_tz_set_critc_temp(struct thermal_zone_device *thermal,
-				   unsigned long temp)
-{
-	struct tsens_tm_device_sensor *tm_sensor = thermal->devdata;
-	unsigned int reg_cntl;
-	int code, sensor_sw_id = 0, rc = 0;
-
-	if (!tm_sensor )
-		return -EINVAL;
-
-	if(temp > TSENS_MAX_THRESHOLD_LIMIT){
-		pr_err("tsens max critical tempeartue is 150\n");
-		return -EINVAL;
-	}
-
-	rc = tsens_get_sw_id_mapping(tm_sensor->sensor_hw_num, &sensor_sw_id);
-	if (rc < 0) {
-		pr_err("tsens mapping index not found\n");
-		return rc;
-	}
-	code = tsens_tz_degc_to_code(temp, sensor_sw_id);
-
-	reg_cntl = readl_relaxed(TSENS_SN_MIN_MAX_STATUS_CTRL
-			(tmdev->tsens_addr) + (tm_sensor->sensor_hw_num *
-					TSENS_SN_ADDR_OFFSET));
-
-	code <<= TSENS_MAX_THRESHOLD_SHIFT;
-	reg_cntl &= ~TSENS_MAX_THRESHOLD_MASK;
-
-	writel_relaxed(reg_cntl | code, (TSENS_SN_MIN_MAX_STATUS_CTRL
-					(tmdev->tsens_addr) +
-					(tm_sensor->sensor_hw_num *
-					TSENS_SN_ADDR_OFFSET)));
-	mb();
-	return 0;
-}
-
-static int tsens_tz_get_critic_temp(struct thermal_zone_device *thermal,
-				   unsigned long *temp)
-{
-	struct tsens_tm_device_sensor *tm_sensor = thermal->devdata;
-	unsigned int reg;
-	int sensor_sw_id = -EINVAL, rc = 0;
-
-	if (!tm_sensor || !temp)
-		return -EINVAL;
-
-	reg = readl_relaxed(TSENS_SN_MIN_MAX_STATUS_CTRL
-						(tmdev->tsens_addr) +
-			(tm_sensor->sensor_hw_num * TSENS_SN_ADDR_OFFSET));
-
-	reg = (reg & TSENS_MAX_THRESHOLD_MASK) >>
-				TSENS_MAX_THRESHOLD_SHIFT;
-
-	rc = tsens_get_sw_id_mapping(tm_sensor->sensor_hw_num, &sensor_sw_id);
-	if (rc < 0) {
-		pr_err("tsens mapping index not found\n");
-		return rc;
-	}
-
-	pr_info("reg=%xsensor_sw_id=%d,\n",reg,sensor_sw_id);
-
-	*temp = tsens_tz_code_to_degc(reg, sensor_sw_id);
-
-	return 0;
-}
-#endif
 static int tsens_tz_notify(struct thermal_zone_device *thermal,
 				int count, enum thermal_trip_type type)
 {
@@ -1059,10 +991,6 @@ static struct thermal_zone_device_ops tsens_thermal_zone_ops = {
 	.get_trip_temp = tsens_tz_get_trip_temp,
 	.set_trip_temp = tsens_tz_set_trip_temp,
 	.notify = tsens_tz_notify,
-#ifdef CONFIG_LGE_PM
-	.get_crit_temp = tsens_tz_get_critic_temp,
-	.set_crit_temp = tsens_tz_set_critc_temp,
-#endif
 };
 
 static void notify_uspace_tsens_fn(struct work_struct *work)
@@ -1149,10 +1077,14 @@ static void tsens_scheduler_fn(struct work_struct *work)
 		}
 	}
 	mb();
+
+	enable_irq(tmdev->tsens_irq);
 }
 
 static irqreturn_t tsens_isr(int irq, void *data)
 {
+	disable_irq_nosync(tmdev->tsens_irq);
+
 	queue_work(tmdev->tsens_wq, &tmdev->tsens_work);
 
 	return IRQ_HANDLED;
@@ -3227,7 +3159,7 @@ static int _tsens_register_thermal(void)
 	}
 
 	rc = request_irq(tmdev->tsens_irq, tsens_isr,
-		IRQF_TRIGGER_RISING, "tsens_interrupt", tmdev);
+		IRQF_TRIGGER_HIGH, "tsens_interrupt", tmdev);
 	if (rc < 0) {
 		pr_err("%s: request_irq FAIL: %d\n", __func__, rc);
 		for (i = 0; i < tmdev->tsens_num_sensor; i++)
